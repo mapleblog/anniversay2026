@@ -5,6 +5,10 @@
 ## 项目描述
 这是一个single page的情侣在一起一周年的纪念网站。
 
+## 项目规则
+- 不准修改项原有的内容文件 ARCHITECTURE.md, STATUS.md, TASKS.md, TODO.md, AGENTS.md
+
+
 ## 文档地图
 - [./trae/docs/ARCHITECTURE.md](项目结构配置)
 - [./trae/docs/TODO.md](待办事项)

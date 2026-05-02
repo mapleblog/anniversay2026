@@ -1,6 +1,26 @@
+const prefersReducedMotion = typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  : false;
+const isSmallScreen = typeof window.matchMedia === 'function'
+  ? window.matchMedia('(max-width: 768px)').matches
+  : false;
+const hardwareConcurrency = typeof navigator.hardwareConcurrency === 'number' ? navigator.hardwareConcurrency : 4;
+const deviceMemory = typeof navigator.deviceMemory === 'number' ? navigator.deviceMemory : 4;
+
+const perfQuality = (() => {
+  let q = 1;
+  if (isSmallScreen) q *= 0.75;
+  if (hardwareConcurrency <= 4) q *= 0.8;
+  if (deviceMemory <= 4) q *= 0.8;
+  if (prefersReducedMotion) q *= 0.45;
+  return Math.max(0.35, Math.min(1, q));
+})();
+
+document.documentElement.dataset.perf = perfQuality < 0.7 ? 'low' : 'high';
+
 // ============ 1. 生成星空 ============
 const starsLayer = document.getElementById('stars-layer');
-const STAR_COUNT = 180;
+const STAR_COUNT = Math.max(70, Math.min(200, Math.round(180 * (isSmallScreen ? 0.7 : 1) * (hardwareConcurrency <= 4 ? 0.8 : 1) * (prefersReducedMotion ? 0.6 : 1))));
 
 for (let i = 0; i < STAR_COUNT; i++) {
   const star = document.createElement('div');
@@ -20,22 +40,25 @@ for (let i = 0; i < STAR_COUNT; i++) {
 }
 
 // ============ 2. 萤火虫（优化：单 rAF 循环替代 12 个 setInterval）============
-const FIREFLY_COUNT = 12;
+const FIREFLY_COUNT = Math.max(6, Math.round(12 * (isSmallScreen ? 0.75 : 1) * (hardwareConcurrency <= 4 ? 0.85 : 1) * (prefersReducedMotion ? 0.6 : 1)));
 const fireflies = [];
 
 for (let i = 0; i < FIREFLY_COUNT; i++) {
   const el = document.createElement('div');
   el.className = 'firefly';
-  el.style.left = Math.random() * 100 + 'vw';
-  el.style.top = Math.random() * 100 + 'vh';
+  el.style.left = '0';
+  el.style.top = '0';
   el.style.animationDuration = (Math.random() * 4 + 3) + 's';
   el.style.animationDelay = Math.random() * 5 + 's';
   document.body.appendChild(el);
 
+  const x = Math.random() * 100;
+  const y = Math.random() * 100;
+  el.style.transform = `translate3d(${x}vw, ${y}vh, 0)`;
   fireflies.push({
     el,
-    x: parseFloat(el.style.left),
-    y: parseFloat(el.style.top),
+    x,
+    y,
     vx: (Math.random() - 0.5) * 0.05,
     vy: (Math.random() - 0.5) * 0.05,
   });
@@ -52,36 +75,19 @@ function updateFireflies(now) {
     ff.y += ff.vy;
     if (ff.x < 0 || ff.x > 100) ff.vx *= -1;
     if (ff.y < 0 || ff.y > 100) ff.vy *= -1;
-    ff.el.style.left = ff.x + 'vw';
-    ff.el.style.top = ff.y + 'vh';
+    ff.el.style.transform = `translate3d(${ff.x}vw, ${ff.y}vh, 0)`;
   }
 }
 
 // ============ 3. 粒子烟花（优化：对象池 + 跳跃帧衰减 + 阴影优化）============
 const canvas = document.getElementById('fireworks-canvas');
 const ctx = canvas.getContext('2d');
-
-const prefersReducedMotion = typeof window.matchMedia === 'function'
-  ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  : false;
-const isSmallScreen = typeof window.matchMedia === 'function'
-  ? window.matchMedia('(max-width: 768px)').matches
-  : false;
-const hardwareConcurrency = typeof navigator.hardwareConcurrency === 'number' ? navigator.hardwareConcurrency : 4;
-const deviceMemory = typeof navigator.deviceMemory === 'number' ? navigator.deviceMemory : 4;
-
-const fireworksQuality = (() => {
-  let q = 1;
-  if (isSmallScreen) q *= 0.75;
-  if (hardwareConcurrency <= 4) q *= 0.8;
-  if (deviceMemory <= 4) q *= 0.8;
-  if (prefersReducedMotion) q *= 0.45;
-  return Math.max(0.35, Math.min(1, q));
-})();
+const fireworksQuality = perfQuality;
 
 const MAX_PARTICLES = Math.max(260, Math.min(1200, Math.round(900 * fireworksQuality)));
 const SPARKLE_COUNT = Math.max(24, Math.round(60 * fireworksQuality));
 const TARGET_FPS = prefersReducedMotion ? 30 : (fireworksQuality < 0.8 ? 45 : 60);
+const IDLE_FPS = prefersReducedMotion ? 10 : (fireworksQuality < 0.8 ? 12 : 15);
 const SHADOW_BLUR = prefersReducedMotion ? 6 : (fireworksQuality < 0.8 ? 8 : 12);
 const TRAIL_FADE_MS = 3000;
 const TRAIL_DECAY_K = Math.log(100) / TRAIL_FADE_MS;
@@ -291,7 +297,8 @@ function animateFireworks(now) {
 
   updateFireflies(now);
 
-  const frameInterval = 1000 / TARGET_FPS;
+  const desiredFps = particles.length > 0 ? TARGET_FPS : IDLE_FPS;
+  const frameInterval = 1000 / desiredFps;
   if (lastFrameTime && (now - lastFrameTime) < frameInterval) {
     animationFrameId = requestAnimationFrame(animateFireworks);
     return;
@@ -311,9 +318,8 @@ function animateFireworks(now) {
     return;
   }
 
-  // 优化：跳跃帧衰减 — 每隔一帧才做全屏 destination-in，降低 50% 像素操作
   trailDecaySkipCounter = (trailDecaySkipCounter + 1) % 2;
-  if (trailDecaySkipCounter === 0) {
+  if ((particles.length > 0 || lastParticleTime) && trailDecaySkipCounter === 0) {
     ctx.globalCompositeOperation = 'destination-in';
     const keepAlpha = Math.exp(-TRAIL_DECAY_K * dt * 2);
     ctx.fillStyle = `rgba(0, 0, 0, ${keepAlpha})`;
@@ -479,3 +485,228 @@ document.addEventListener('visibilitychange', () => {
 
   startAuto();
 })();
+
+// ============ 5. 流星雨（Canvas 对象池 + 自动阵发调度）============
+const meteorCanvas = document.getElementById('meteor-canvas');
+const mctx = meteorCanvas.getContext('2d');
+
+const METEOR_MAX = Math.max(10, Math.round(24 * (isSmallScreen ? 0.85 : 1) * (hardwareConcurrency <= 4 ? 0.85 : 1) * (prefersReducedMotion ? 0.7 : 1)));
+
+function resizeMeteorCanvas() {
+  meteorCanvas.width = window.innerWidth;
+  meteorCanvas.height = window.innerHeight;
+}
+resizeMeteorCanvas();
+window.addEventListener('resize', resizeMeteorCanvas);
+
+class Meteor {
+  constructor() {
+    this.active = false;
+    this.x = 0; this.y = 0;
+    this.vx = 0; this.vy = 0;
+    this.length = 0;
+    this.width = 0;
+    this.opacity = 0;
+    this.life = 0;
+    this.decay = 0;
+    this.hue = 0;  // 色相偏移，让流星带轻微暖色/冷色变化
+  }
+
+  reset() {
+    const w = meteorCanvas.width;
+    const h = meteorCanvas.height;
+    const startX = w * (0.55 + Math.random() * 0.45);
+    const startY = -20 - Math.random() * h * 0.15;
+    this.x = startX;
+    this.y = startY;
+
+    const angle = Math.PI * (0.12 + Math.random() * 0.18);
+    const speed = 7 + Math.random() * 11;
+    this.vx = -Math.cos(angle) * speed;
+    this.vy = Math.sin(angle) * speed;
+
+    this.length = 50 + Math.random() * 90;
+    this.width = 1.2 + Math.random() * 1.8;
+    this.opacity = 0.5 + Math.random() * 0.5;
+    this.life = 1;
+    this.decay = 0.003 + Math.random() * 0.005;
+
+    // 大部分白色 (80%)，少部分暖色 (12%) 或冷色 (8%)
+    const r = Math.random();
+    if (r < 0.12) this.hue = 25 + Math.random() * 20;      // 暖橙
+    else if (r < 0.20) this.hue = 200 + Math.random() * 30; // 冰蓝
+    else this.hue = 0;
+
+    this.active = true;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life -= this.decay;
+    if (this.life <= 0 || this.x < -200 || this.y > meteorCanvas.height + 200) {
+      this.active = false;
+    }
+  }
+
+  draw(ctx) {
+    if (this.life <= 0) return;
+
+    const tailLen = this.length * this.life;
+    const dx = this.vx;
+    const dy = this.vy;
+    const dist = Math.hypot(dx, dy) || 1;
+    const tx = this.x - (dx / dist) * tailLen;
+    const ty = this.y - (dy / dist) * tailLen;
+
+    // 尾部渐变：头部最亮 → 尾部完全透明
+    const grad = ctx.createLinearGradient(this.x, this.y, tx, ty);
+    if (this.hue > 0) {
+      const base = `hsla(${this.hue}, 80%, 85%`;
+      grad.addColorStop(0, `${base}, ${this.opacity * this.life})`);
+      grad.addColorStop(0.15, `${base}, ${this.opacity * this.life * 0.6})`);
+      grad.addColorStop(0.5, `${base}, ${this.opacity * this.life * 0.15})`);
+    } else {
+      grad.addColorStop(0, `rgba(255, 255, 255, ${this.opacity * this.life})`);
+      grad.addColorStop(0.15, `rgba(255, 255, 255, ${this.opacity * this.life * 0.5})`);
+      grad.addColorStop(0.5, `rgba(255, 255, 255, ${this.opacity * this.life * 0.12})`);
+    }
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = this.width * (0.3 + 0.7 * this.life);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(this.x, this.y);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+
+    // 头部光晕
+    ctx.shadowBlur = 18 * this.life;
+    ctx.shadowColor = this.hue > 0
+      ? `hsla(${this.hue}, 80%, 85%, ${0.7 * this.life})`
+      : `rgba(255, 255, 255, ${0.7 * this.life})`;
+    ctx.fillStyle = this.hue > 0
+      ? `hsla(${this.hue}, 70%, 92%, ${this.opacity * this.life})`
+      : `rgba(255, 255, 255, ${this.opacity * this.life})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, (1.5 + this.width * 0.6) * this.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+const meteorPool = [];
+for (let i = 0; i < METEOR_MAX; i++) {
+  meteorPool.push(new Meteor());
+}
+
+function acquireMeteor() {
+  for (let i = 0; i < meteorPool.length; i++) {
+    if (!meteorPool[i].active) {
+      meteorPool[i].reset();
+      return meteorPool[i];
+    }
+  }
+  return null;
+}
+
+let activeMeteors = [];
+let meteorAnimId = null;
+let meteorActive = true;
+
+function animateMeteors() {
+  if (!meteorActive) return;
+
+  if (activeMeteors.length === 0) {
+    meteorAnimId = null;
+    mctx.clearRect(0, 0, meteorCanvas.width, meteorCanvas.height);
+    return;
+  }
+
+  mctx.clearRect(0, 0, meteorCanvas.width, meteorCanvas.height);
+
+  let wi = 0;
+  for (let i = 0; i < activeMeteors.length; i++) {
+    const m = activeMeteors[i];
+    m.update();
+    if (!m.active) continue;
+    m.draw(mctx);
+    activeMeteors[wi] = m;
+    wi++;
+  }
+  activeMeteors.length = wi;
+
+  meteorAnimId = requestAnimationFrame(animateMeteors);
+}
+
+function launchMeteorBurst(count) {
+  for (let i = 0; i < count; i++) {
+    const m = acquireMeteor();
+    if (m) activeMeteors.push(m);
+  }
+  if (meteorActive && !meteorAnimId) meteorAnimId = requestAnimationFrame(animateMeteors);
+}
+
+let showerTimerId = null;
+let loneMeteorTimerId = null;
+
+function scheduleNextShower() {
+  const delay = 4000 + Math.random() * 16000;
+  showerTimerId = setTimeout(() => {
+    if (!meteorActive) return;
+
+    const count = 3 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => {
+        if (!meteorActive) return;
+        launchMeteorBurst(1 + Math.floor(Math.random() * 2));
+      }, i * (80 + Math.random() * 220));
+    }
+
+    scheduleNextShower();
+  }, delay);
+}
+
+// 偶尔触发一颗孤星划过
+function scheduleLoneMeteor() {
+  const delay = 2000 + Math.random() * 8000;
+  loneMeteorTimerId = setTimeout(() => {
+    if (!meteorActive) return;
+    if (activeMeteors.length < 3) {
+      launchMeteorBurst(1);
+    }
+    scheduleLoneMeteor();
+  }, delay);
+}
+
+function startMeteorShower() {
+  if (meteorActive) return;
+  meteorActive = true;
+  scheduleNextShower();
+  if (!prefersReducedMotion) scheduleLoneMeteor();
+}
+
+function stopMeteorShower() {
+  if (!meteorActive) return;
+  meteorActive = false;
+  if (showerTimerId) clearTimeout(showerTimerId);
+  showerTimerId = null;
+  if (loneMeteorTimerId) clearTimeout(loneMeteorTimerId);
+  loneMeteorTimerId = null;
+  if (meteorAnimId) cancelAnimationFrame(meteorAnimId);
+  meteorAnimId = null;
+  activeMeteors.length = 0;
+  mctx.clearRect(0, 0, meteorCanvas.width, meteorCanvas.height);
+}
+
+if (!prefersReducedMotion) {
+  meteorActive = true;
+  scheduleNextShower();
+  scheduleLoneMeteor();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopMeteorShower();
+  else if (!prefersReducedMotion) startMeteorShower();
+});
