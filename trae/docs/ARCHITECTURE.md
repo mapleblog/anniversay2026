@@ -7,7 +7,7 @@ anniversary/
 ├── anniversary.html      # 主页面
 ├── anniversary.css       # 样式表
 ├── anniversary.js        # JavaScript (星星、烟花、萤火虫)
-├── image/
+├── images/
 │   ├── photo_1.jpeg      # 幻灯片图片 1
 │   ├── photo_2.jpeg      # 幻灯片图片 2
 │   ├── photo_3.jpeg      # 幻灯片图片 3
